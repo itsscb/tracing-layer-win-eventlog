@@ -150,9 +150,9 @@ impl<'a> EventVisitor<'a> {
 }
 
 impl<'a> Visit for EventVisitor<'a> {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[allow(clippy::cast_possible_truncation)]
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        if field.name().to_lowercase() == "id" {
+        if field.name().to_lowercase() == "id" && value <= u32::MAX.into() {
             self.id = Some(value as u32);
         } else {
             self.fields
@@ -162,7 +162,7 @@ impl<'a> Visit for EventVisitor<'a> {
 
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        if field.name().to_lowercase() == "id" {
+        if field.name().to_lowercase() == "id" && value >= 0 && value <= u32::MAX.into() {
             self.id = Some(value as u32);
         } else {
             self.fields
@@ -171,9 +171,7 @@ impl<'a> Visit for EventVisitor<'a> {
     }
 
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name().to_lowercase() == "id" {
-            self.id = Some(format!("{value:?}").parse().unwrap_or(0));
-        } else if field.name() == "message" {
+        if field.name() == "message" {
             self.message = Some(format!("{value:?}"));
         } else {
             self.fields
