@@ -9,9 +9,13 @@ use winapi::um::winbase::{DeregisterEventSource, RegisterEventSourceA, ReportEve
 use winapi::um::winnt::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_WARNING_TYPE};
 
 #[allow(clippy::manual_c_str_literals)]
-pub fn write_to_event_log(event_id: u32, level: Level, message: &str) {
-    let event_source =
-        unsafe { RegisterEventSourceA(std::ptr::null(), "rotx\0".as_ptr().cast::<i8>()) };
+pub fn write_to_event_log(event_id: u32, level: Level, message: &str, log_name: &str) {
+    let event_source = unsafe {
+        RegisterEventSourceA(
+            std::ptr::null(),
+            format!("{log_name}\0").as_ptr().cast::<i8>(),
+        )
+    };
 
     if event_source.is_null() {
         eprintln!("Failed to register event source");
@@ -52,7 +56,16 @@ pub fn write_to_event_log(event_id: u32, level: Level, message: &str) {
     }
 }
 
-pub struct EventLogLayer;
+pub struct EventLogLayer {
+    log_name: String,
+}
+
+impl EventLogLayer {
+    #[must_use]
+    pub const fn new(log_name: String) -> Self {
+        Self { log_name }
+    }
+}
 impl<S> Layer<S> for EventLogLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -65,6 +78,7 @@ where
             message: None,
             parents: None,
             log_level: *metadata.level(),
+            log_name: &self.log_name,
             fields: HashMap::new(),
         };
 
@@ -99,15 +113,16 @@ where
 }
 
 #[derive(Debug)]
-struct EventVisitor {
+struct EventVisitor<'a> {
     id: Option<u32>,
     log_level: Level,
     message: Option<String>,
     parents: Option<String>,
     fields: HashMap<String, String>,
+    log_name: &'a str,
 }
 
-impl EventVisitor {
+impl<'a> EventVisitor<'a> {
     fn log(&self) {
         let id: u32 = self.id.unwrap_or(match self.log_level {
             Level::TRACE => 0,
@@ -127,22 +142,14 @@ impl EventVisitor {
         }
 
         self.fields.iter().for_each(|i| {
-            msg.push_str(&format!(
-                "{}: {:?}\n",
-                i.0,
-                i.1.split('=')
-                    .skip(1)
-                    .take(1)
-                    .collect::<String>()
-                    .replace(r"\\", r"\")
-            ));
+            msg.push_str(&format!("{}: {:?}\n", i.0, i.1.replace(r"\\", r"\")));
         });
 
-        write_to_event_log(id, self.log_level, &msg);
+        write_to_event_log(id, self.log_level, &msg, self.log_name);
     }
 }
 
-impl Visit for EventVisitor {
+impl<'a> Visit for EventVisitor<'a> {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
         if field.name().to_lowercase() == "id" {
@@ -169,10 +176,8 @@ impl Visit for EventVisitor {
         } else if field.name() == "message" {
             self.message = Some(format!("{value:?}"));
         } else {
-            self.fields.insert(
-                field.name().to_string(),
-                format!("{} = {:?}, ", field.name(), value),
-            );
+            self.fields
+                .insert(field.name().to_string(), format!("{value:?}"));
         }
     }
 
