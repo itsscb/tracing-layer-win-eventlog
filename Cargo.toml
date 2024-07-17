@@ -1,12 +1,13 @@
 [package]
 name = "tracing-layer-win-eventlog"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 author = ["itsscb <dev@itsscb.de>"]
 description = "Layer for the tracing_subscriber to write to the Windows EventLog"
 keywords = ["tracing", "tracing_subscriber","layer","eventlog","windows"]
 license = "MIT"
 repository = "https://github.com/itsscb/tracing-layer-win-eventlog"
+categories =["os::windows-apis"]
 
 [dependencies]
 tracing = "0.1.40"
