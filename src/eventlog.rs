@@ -54,6 +54,7 @@ pub fn write_to_event_log(event_source: HANDLE, event_id: u32, level: Level, mes
 
 pub struct EventLogLayer {
     event_source: EventSourceHandle,
+    default_id: Option<u32>
 }
 
 impl Drop for EventLogLayer {
@@ -64,6 +65,10 @@ impl Drop for EventLogLayer {
 
 impl EventLogLayer {
     pub fn new(log_name: &str) -> Result<Self, windows_result::Error> {
+        Self::new_with_default_id(log_name, None)
+    }
+
+    pub fn new_with_default_id(log_name: &str, default_id: Option<u32>) -> Result<Self, windows_result::Error> {
         let log_name = HSTRING::from(log_name);
         let Ok(event_source) = (unsafe {
             RegisterEventSourceW(
@@ -73,7 +78,7 @@ impl EventLogLayer {
         }) else {
             return Err(windows_result::Error::from_win32());
         };
-        Ok(Self { event_source: event_source.into() })
+        Ok(Self { event_source: event_source.into(), default_id })
     }
 }
 impl<S> Layer<S> for EventLogLayer
@@ -85,6 +90,7 @@ where
 
         let mut visitor = EventVisitor {
             event_source: self.event_source.into(),
+            default_id: self.default_id,
             id: None,
             message: None,
             parents: None,
@@ -125,6 +131,7 @@ where
 #[derive(Debug)]
 struct EventVisitor {
     event_source: HANDLE,
+    default_id: Option<u32>,
     id: Option<u32>,
     log_level: Level,
     message: Option<String>,
@@ -134,13 +141,7 @@ struct EventVisitor {
 
 impl EventVisitor {
     fn log(&self) {
-        let id: u32 = self.id.unwrap_or(match self.log_level {
-            Level::TRACE => 0,
-            Level::DEBUG => 1,
-            Level::INFO => 2,
-            Level::WARN => 3,
-            Level::ERROR => 4,
-        });
+        let id: u32 = self.id.unwrap_or(self.default_id.unwrap_or_default());
 
         let mut msg = format!("ID: {id}\n\n");
 
