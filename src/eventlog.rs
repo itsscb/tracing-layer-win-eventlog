@@ -143,15 +143,15 @@ impl EventVisitor {
     fn log(&self) {
         let id: u32 = self.id.unwrap_or(self.default_id.unwrap_or_default());
 
-        let mut msg = format!("ID: {id}\n\n");
+        let mut msg = String::new();
+        
+        if let Some(m) = &self.message {
+            msg.push_str(&format!("{m}\n\n"));
+        }
 
         if let Some(m) = &self.parents {
             msg.push_str(&format!("source: {m}\n"));
         }
-        if let Some(m) = &self.message {
-            msg.push_str(&format!("message: {m}\n"));
-        }
-
         self.fields.iter().for_each(|i| {
             msg.push_str(&format!("{}: {:?}\n", i.0, i.1.replace(r"\\", r"\")));
         });
@@ -166,8 +166,7 @@ impl Visit for EventVisitor {
         if field.name().to_lowercase() == "id" && value <= u32::MAX.into() {
             self.id = Some(value as u32);
         } else {
-            self.fields
-                .insert(field.name().to_string(), format!("{value}"));
+            self.record_debug(field, &value);
         }
     }
 
@@ -176,8 +175,7 @@ impl Visit for EventVisitor {
         if field.name().to_lowercase() == "id" && value >= 0 && value <= u32::MAX.into() {
             self.id = Some(value as u32);
         } else {
-            self.fields
-                .insert(field.name().to_string(), format!("{value:?}"));
+            self.record_debug(field, &value);
         }
     }
 
