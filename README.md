@@ -16,7 +16,7 @@ use tracing_subscriber::{layer::SubscriberExt as _, util::SubscriberInitExt as _
 fn main() {
     println!("Hello, world!");
 
-    let eventlog = tracing_layer_win_eventlog::EventLogLayer::new("hello_world".to_owned());
+    let eventlog = tracing_layer_win_eventlog::EventLogLayer::new("hello_world");
 
     tracing_subscriber::registry()
         .with(eventlog)

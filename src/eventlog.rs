@@ -1,69 +1,79 @@
 use std::collections::HashMap;
-use std::ffi::CString;
 use tracing::field::Visit;
 use tracing::{Level, Subscriber};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
-use winapi::shared::minwindef::DWORD;
-use winapi::um::winbase::{DeregisterEventSource, RegisterEventSourceA, ReportEventA};
-use winapi::um::winnt::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_WARNING_TYPE};
+use windows::core::{HSTRING, PCWSTR};
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_WARNING_TYPE};
 
-#[allow(clippy::manual_c_str_literals)]
-pub fn write_to_event_log(event_id: u32, level: Level, message: &str, log_name: &str) {
-    let event_source = unsafe {
-        RegisterEventSourceA(
-            std::ptr::null(),
-            format!("{log_name}\0").as_ptr().cast::<i8>(),
-        )
-    };
+/// Wrapper to mark the HANDLE as Send & Sync
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug)]
+struct EventSourceHandle {
+    hwnd: *mut std::ffi::c_void,
+}
+unsafe impl Send for EventSourceHandle {}
+unsafe impl Sync for EventSourceHandle {}
 
-    if event_source.is_null() {
-        eprintln!("Failed to register event source");
-        return;
+impl From<EventSourceHandle> for HANDLE {
+    fn from(value: EventSourceHandle) -> Self {
+         Self(value.hwnd)
     }
+}
 
+impl From<HANDLE> for EventSourceHandle {
+    fn from(value: HANDLE) -> Self {
+         Self{ hwnd: value.0 }
+    }
+}
+
+pub fn write_to_event_log(event_source: HANDLE, event_id: u32, level: Level, message: &str) {
     let event_type = match level {
         Level::ERROR => EVENTLOG_ERROR_TYPE,
         Level::WARN => EVENTLOG_WARNING_TYPE,
         Level::INFO | Level::DEBUG | Level::TRACE => EVENTLOG_INFORMATION_TYPE,
     };
 
-    let Ok(message_cstr) = CString::new(message) else {
-        eprintln!("failed to create CString from message: {message}");
-        return;
-    };
-
-    let result = unsafe {
-        ReportEventA(
+    let message = HSTRING::from(message);
+    if let Err(e) = unsafe {
+        ReportEventW(
             event_source,
             event_type,
             0,
-            event_id as DWORD,
-            std::ptr::null_mut(),
-            1,
+            event_id,
+            None,
             0,
-            &mut message_cstr.as_ptr(),
-            std::ptr::null_mut(),
+            Some(&[PCWSTR(message.as_ptr())]),
+            None,
         )
+    } {
+        eprintln!("Failed to write to event log: {:?}", e);
     };
-
-    if result == 0 {
-        eprintln!("Failed to write to event log");
-    }
-
-    unsafe {
-        DeregisterEventSource(event_source);
-    }
 }
 
 pub struct EventLogLayer {
-    log_name: String,
+    event_source: EventSourceHandle,
+}
+
+impl Drop for EventLogLayer {
+    fn drop(&mut self) {
+        let _ = unsafe { DeregisterEventSource(self.event_source.into()) };
+    }
 }
 
 impl EventLogLayer {
-    #[must_use]
-    pub const fn new(log_name: String) -> Self {
-        Self { log_name }
+    pub fn new(log_name: &str) -> Result<Self, windows_result::Error> {
+        let log_name = HSTRING::from(log_name);
+        let Ok(event_source) = (unsafe {
+            RegisterEventSourceW(
+                None,
+                PCWSTR(log_name.as_ptr())
+            )
+        }) else {
+            return Err(windows_result::Error::from_win32());
+        };
+        Ok(Self { event_source: event_source.into() })
     }
 }
 impl<S> Layer<S> for EventLogLayer
@@ -74,11 +84,11 @@ where
         let metadata = event.metadata();
 
         let mut visitor = EventVisitor {
+            event_source: self.event_source.into(),
             id: None,
             message: None,
             parents: None,
             log_level: *metadata.level(),
-            log_name: &self.log_name,
             fields: HashMap::new(),
         };
 
@@ -113,16 +123,16 @@ where
 }
 
 #[derive(Debug)]
-struct EventVisitor<'a> {
+struct EventVisitor {
+    event_source: HANDLE,
     id: Option<u32>,
     log_level: Level,
     message: Option<String>,
     parents: Option<String>,
     fields: HashMap<String, String>,
-    log_name: &'a str,
 }
 
-impl<'a> EventVisitor<'a> {
+impl EventVisitor {
     fn log(&self) {
         let id: u32 = self.id.unwrap_or(match self.log_level {
             Level::TRACE => 0,
@@ -145,11 +155,11 @@ impl<'a> EventVisitor<'a> {
             msg.push_str(&format!("{}: {:?}\n", i.0, i.1.replace(r"\\", r"\")));
         });
 
-        write_to_event_log(id, self.log_level, &msg, self.log_name);
+        write_to_event_log(self.event_source, id, self.log_level, &msg);
     }
 }
 
-impl<'a> Visit for EventVisitor<'a> {
+impl Visit for EventVisitor {
     #[allow(clippy::cast_possible_truncation)]
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
         if field.name().to_lowercase() == "id" && value <= u32::MAX.into() {
