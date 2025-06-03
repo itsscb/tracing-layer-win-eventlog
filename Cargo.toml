@@ -2,6 +2,7 @@
 name = "tracing-layer-win-eventlog"
 version = "0.1.3"
 edition = "2021"
+author = ["itsscb <dev@itsscb.de>"]
 description = "Layer for the tracing_subscriber to write to the Windows EventLog"
 keywords = ["tracing", "tracing_subscriber","layer","eventlog","windows"]
 license = "MIT"
